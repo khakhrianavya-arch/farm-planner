@@ -5,7 +5,7 @@
 // upgrade older data, so nothing already saved ever breaks.
 // =========================================================
 
-export const SCHEMA = 2;
+export const SCHEMA = 3;
 
 export const DEFAULTS = {
   house:{ name:'House', w:14, d:10, h:3, roof:'gable', wall:'#e8dcc8', roofColor:'#8a3b2e' },
@@ -51,7 +51,7 @@ export const SPECIES = ['Teak','Mango','Coconut','Areca nut','Jackfruit','Banana
 export function habitFor(species){ return SPECIES_HABIT[String(species||'').trim().toLowerCase()] || null; }
 
 export function blankFarm(){
-  return { schema:SCHEMA, name:'My Farm', width:200, depth:150, location:null, season:'auto', items:[] };
+  return { schema:SCHEMA, name:'My Farm', width:200, depth:150, location:null, season:'auto', items:[], tasks:{} };
 }
 
 const num = (v, fallback) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
@@ -73,6 +73,25 @@ export function normalizeItem(raw){
   return it;
 }
 
+// One entry on the shared to-do list.
+export function normalizeTask(raw, id){
+  if(!raw || typeof raw !== 'object') return null;
+  const title = String(raw.title || '').trim().slice(0, 200);
+  if(!title) return null;
+  return {
+    id: String(id || raw.id || Math.random().toString(36).slice(2, 10)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'task',
+    title, body: String(raw.body || '').slice(0, 1000), source: String(raw.source || ''),
+    createdAtMs: num(raw.createdAtMs, Date.now()), createdBy: String(raw.createdBy || ''),
+    done: !!raw.done, doneAtMs: raw.done ? num(raw.doneAtMs, Date.now()) : null, doneBy: raw.done ? String(raw.doneBy || '') : '',
+  };
+}
+export function normalizeTasks(raw){
+  const out = {};
+  const entries = Array.isArray(raw) ? raw.map(t => [t && t.id, t]) : Object.entries(raw && typeof raw === 'object' ? raw : {});
+  for(const [id, t] of entries){ const n = normalizeTask(t, id); if(n) out[n.id] = n; }
+  return out;
+}
+
 // Upgrade any older farm (a v1 export, an old browser save) to the current format.
 export function migrate(data){
   const src = (data && typeof data === 'object') ? data : {};
@@ -86,6 +105,8 @@ export function migrate(data){
   f.season = ['auto','spring','summer','autumn','winter'].includes(src.season) ? src.season : 'auto';
   f.items = (Array.isArray(src.items) ? src.items : []).map(normalizeItem).filter(Boolean);
   // v1 → v2: nothing renamed; older saves simply lacked `schema`.
+  // v2 → v3: the shared to-do list (`tasks`) was added; older farms start with an empty list.
+  f.tasks = normalizeTasks(src.tasks);
   f.schema = SCHEMA;
   return f;
 }

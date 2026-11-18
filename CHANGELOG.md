@@ -1,5 +1,11 @@
 # Changes
 
+## 2.2.0
+- Insights tab: "Today on the farm", a daily suggestion that changes each morning (weather warnings, monthly jobs for the species on the farm, farm-data checks, general tips), plus "Also worth doing".
+- Tree distribution by species and type, trees per hectare, young trees, spacing check, colour-by-species view with legend.
+- Rain & water: last 7/30/90 days, days since rain, 7-day forecast, 30-day water balance, monthly rainfall chart, rain on each pond.
+- Shared to-do list (data format v3; older farms upgrade automatically).
+
 ## 2.1.1
 - Clear message instead of endless "Connecting…" when the database can't be reached.
 - Each publish stamps file links with its version, so browsers never mix old and new files.

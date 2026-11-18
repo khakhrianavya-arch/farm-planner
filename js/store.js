@@ -6,7 +6,7 @@
 // The rest of the app only talks to this module.
 // =========================================================
 import { firebaseConfig, IS_BETA } from './config.js';
-import { SCHEMA, migrate, normalizeItem, settingsOf, blankFarm } from './schema.js';
+import { SCHEMA, migrate, normalizeItem, normalizeTasks, normalizeTask, settingsOf, blankFarm } from './schema.js';
 import { makeCode, parseCode } from './link.js';
 
 const FB_VERSION = '10.12.2';
@@ -39,7 +39,7 @@ function writeStr(key, v){ try{ v ? localStorage.setItem(key, v) : localStorage.
 let localTimer = null;
 function saveLocal(){ clearTimeout(localTimer); localTimer = setTimeout(() => writeJSON(LOCAL_KEY, exportFarm()), 200); }
 
-export function exportFarm(){ const f = state.farm; return { ...settingsOf(f), items: f.items.map(it => ({ ...it })) }; }
+export function exportFarm(){ const f = state.farm; return { ...settingsOf(f), items: f.items.map(it => ({ ...it })), tasks: structuredClone(f.tasks || {}) }; }
 export function editorName(){ return readStr(NAME_KEY); }
 export function setEditorName(n){ writeStr(NAME_KEY, String(n || '').trim().slice(0, 40)); }
 const by = () => editorName() || 'Someone';
@@ -82,7 +82,7 @@ export async function createFamilyFarm(){
   disconnect();
   state.code = code;
   try{
-    await withTimeout(fb.setDoc(farmRef(), { ...settingsOf(current), createdAt: fb.serverTimestamp(), updatedBy: by() }));
+    await withTimeout(fb.setDoc(farmRef(), { ...settingsOf(current), tasks: current.tasks || {}, createdAt: fb.serverTimestamp(), updatedBy: by() }));
     await writeAllItems(current.items, []);
   }catch(e){
     state.code = null;
@@ -145,11 +145,13 @@ async function openFarm(code){
   }
   rememberCode(code);
   state.mode = 'cloud';
-  state.farm = migrate({ ...snap.data(), items: [] });
+  state.farm = migrate({ ...snap.data(), items: [] });   // includes the to-do list
 
   unsubs.push(fb.onSnapshot(farmRef(), s => {
     if(!s.exists() || s.metadata.hasPendingWrites) return;
-    Object.assign(state.farm, settingsOf(migrate({ ...s.data(), items: [] })));
+    const fresh = migrate({ ...s.data(), items: [] });
+    Object.assign(state.farm, settingsOf(fresh));
+    state.farm.tasks = fresh.tasks;
     emit({ type:'settings' });
   }, onError));
 
@@ -225,7 +227,27 @@ export async function replaceAll(data, reason){
   state.farm = f;
   emit({ type:'all' });
   if(state.mode !== 'cloud'){ saveLocal(); return; }
-  await writeAllItems(f.items, old.filter(id => !f.items.some(i => i.id === id)), settingsOf(f));
+  await writeAllItems(f.items, old.filter(id => !f.items.some(i => i.id === id)), { ...settingsOf(f), tasks: f.tasks || {} });
+}
+
+/* ---------------- Shared to-do list ---------------- */
+// Each task is saved on its own (tasks.<id>), so two people ticking different tasks never overwrite each other.
+export function saveTask(raw){
+  const t = normalizeTask({ createdBy: by(), ...raw }, raw.id);
+  if(!t) return null;
+  if(t.done && !raw.doneBy) t.doneBy = by();
+  state.farm.tasks = { ...(state.farm.tasks || {}), [t.id]: t };
+  emit({ type:'tasks' });
+  if(state.mode !== 'cloud') saveLocal();
+  else fb.updateDoc(farmRef(), { ['tasks.' + t.id]: t }).catch(onError);
+  return t;
+}
+export function removeTask(id){
+  const next = { ...(state.farm.tasks || {}) }; delete next[id];
+  state.farm.tasks = next;
+  emit({ type:'tasks' });
+  if(state.mode !== 'cloud') saveLocal();
+  else fb.updateDoc(farmRef(), { ['tasks.' + id]: fb.deleteField() }).catch(onError);
 }
 
 /* ---------------- Backups (snapshots) ---------------- */

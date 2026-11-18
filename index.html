@@ -18,6 +18,7 @@
   <header id="wx">
     <span class="farmname" id="farmTitle">My Farm</span>
     <span class="loc" id="locBtn">📍 <span id="locName">Set farm location</span></span>
+    <span class="loc today-chip" id="todayChip" hidden title="">💡 <span id="todayText"></span></span>
     <div id="wxchips"></div>
     <span id="wxmsg"></span>
     <span class="spacer"></span>
@@ -48,9 +49,11 @@
       <div id="viewbtns">
         <button id="btn3d" class="on">3D view</button>
         <button id="btnTop">Top view</button>
+        <button id="btnColour" title="Colour trees by species">🎨 Species</button>
         <button id="btnSnap" class="on" title="Snap positions to 1 m">Snap 1 m</button>
       </div>
       <div id="hint"></div>
+      <div id="legend" hidden></div>
       <div id="loadErr" hidden>The 3D engine could not load. Check your internet connection and refresh.</div>
     </div>
 

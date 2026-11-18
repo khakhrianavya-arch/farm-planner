@@ -16,7 +16,9 @@ the same farm, live. No accounts or passwords.
 | `js/items3d.js` | The 3D model for each kind of object |
 | `js/schema.js` | The farm data format, defaults, species list, and `migrate()` for older data |
 | `js/store.js` | Saving: Firebase (shared, live) or this browser only (offline mode) |
-| `js/weather.js`, `js/seasons.js` | Open-Meteo weather and hemisphere-aware seasons |
+| `js/weather.js`, `js/seasons.js` | Open-Meteo weather, rainfall history and hemisphere-aware seasons |
+| `js/insights.js`, `js/advice.js` | Farm numbers and the built-in suggestion rules, species calendar and tips |
+| `js/insightsUI.js` | The Insights and To-do tabs |
 | `js/config.js` | Firebase connection settings |
 | `js/link.js` | Making and reading family links |
 | `firestore.rules` | Database rules: farms open only to people with the link (pasted into the Firebase console) |
