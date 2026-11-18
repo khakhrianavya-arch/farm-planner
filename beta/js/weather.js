@@ -38,6 +38,40 @@ export async function fetchWeather(loc){
   };
 }
 
+const iso = d => d.toISOString().slice(0, 10);
+
+// Daily history (92 days) + 7-day forecast, plus 12 months of monthly rainfall.
+export async function fetchClimate(loc){
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}`
+    + `&daily=precipitation_sum,temperature_2m_max,temperature_2m_min,et0_fao_evapotranspiration,wind_gusts_10m_max,relative_humidity_2m_mean`
+    + `&past_days=92&forecast_days=7&timezone=auto`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error('Weather service ' + r.status);
+  const d = (await r.json()).daily;
+  const daily = { dates: d.time, rain: d.precipitation_sum, tmax: d.temperature_2m_max, tmin: d.temperature_2m_min,
+    et0: d.et0_fao_evapotranspiration, gust: d.wind_gusts_10m_max, hum: d.relative_humidity_2m_mean || [] };
+
+  // Monthly totals for the past year from the archive (it lags a few days), topped up with recent days.
+  const monthly = {};
+  try{
+    const end = new Date(Date.now() - 6 * 86400000), start = new Date(Date.now() - 366 * 86400000);
+    const a = await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${loc.lat}&longitude=${loc.lon}`
+      + `&start_date=${iso(start)}&end_date=${iso(end)}&daily=precipitation_sum&timezone=auto`);
+    if(a.ok){
+      const ad = (await a.json()).daily;
+      ad.time.forEach((t, i) => { const m = t.slice(0, 7); monthly[m] = (monthly[m] || 0) + (ad.precipitation_sum[i] || 0); });
+      var lastArchived = ad.time[ad.time.length - 1];
+    }
+  }catch(e){ /* the chart just shows less */ }
+  const todayStr = d.time[92];
+  d.time.forEach((t, i) => {
+    if(t > todayStr || (lastArchived && t <= lastArchived)) return;
+    const m = t.slice(0, 7); monthly[m] = (monthly[m] || 0) + (d.precipitation_sum[i] || 0);
+  });
+  const months = Object.keys(monthly).sort().slice(-12).map(m => ({ month: m, rain: monthly[m] }));
+  return { daily, today: 92, months, fetchedAt: Date.now() };
+}
+
 export async function searchPlaces(q){
   const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`);
   if(!r.ok) throw new Error('Search ' + r.status);

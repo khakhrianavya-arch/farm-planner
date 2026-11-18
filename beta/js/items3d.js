@@ -13,7 +13,7 @@ function seeded(id){
   return () => { h = (h * 1664525 + 1013904223) >>> 0; return h / 4294967296; };
 }
 
-export function buildItem(it, season){
+export function buildItem(it, season, colourOverride = null){
   const g = new THREE.Group();
   g.userData.id = it.id;
   const n = v => Math.max(0.1, Number(v) || 0.1);
@@ -58,7 +58,7 @@ export function buildItem(it, season){
 
   else if(it.type === 'tree'){
     const H = n(it.height), C = n(it.canopy);
-    const look = canopyLook(it.habit, season);
+    const look = colourOverride ? { color: colourOverride } : canopyLook(it.habit, season);
     const trunkH = it.habit === 'conifer' ? H * 0.18 : H * 0.38;
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1 + C * 0.025, 0.18 + C * 0.035, trunkH, 8), mat('#6b4b32'));
     trunk.position.y = trunkH / 2; g.add(trunk);

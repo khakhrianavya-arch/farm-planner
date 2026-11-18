@@ -91,6 +91,86 @@ for (const app of ['', 'beta']) {
     });
   }
 
+  if (existsSync(join(dir, 'js', 'advice.js'))) {
+    const ins = await import(pathToFileURL(join(dir, 'js', 'insights.js')));
+    const adv = await import(pathToFileURL(join(dir, 'js', 'advice.js')));
+    const tree = (id, x, z, extra = {}) => ({ id, type: 'tree', x, z, rot: 0, name: 'T' + id, species: 'Teak', habit: 'deciduous', height: 10, canopy: 6, planted: '', notes: '', ...extra });
+    const farm = schema.migrate({ width: 100, depth: 100, location: { name: 'Farm', lat: 12.517, lon: 77.683 },
+      items: [tree('a', 0, 0, { planted: '2025' }), tree('b', 2, 0), tree('c', 30, 30, { species: 'Mango', habit: 'evergreen' }), tree('d', -30, 10, { species: '' }),
+              { id: 'p', type: 'pond', x: 0, z: 30, shape: 'rectangle', w: 10, d: 5 }] });
+    const climate = (o = {}) => {
+      const n = 99, fill = v => Array(n).fill(v);
+      const daily = { dates: fill('2026-11-18'), rain: fill(0), tmax: fill(30), tmin: fill(18), et0: fill(4), gust: fill(15), hum: fill(60) };
+      for (const [k, arr] of Object.entries(o)) arr.forEach(([i, v]) => { daily[k][92 + i] = v; });
+      return { daily, today: 92, months: [] };
+    };
+
+    await test('farm schema v2 files gain an empty to-do list; tasks are cleaned up', () => {
+      const f = schema.migrate({ schema: 2, items: [] });
+      assert.equal(f.schema, schema.SCHEMA); assert.deepEqual(f.tasks, {});
+      const g = schema.migrate({ tasks: { 'ok1': { title: ' Clear drains ', done: true }, bad: { title: '' }, 'x y!': { title: 'Odd id' } } });
+      assert.equal(g.tasks.ok1.title, 'Clear drains'); assert.equal(g.tasks.ok1.done, true);
+      assert.ok(!g.tasks.bad); assert.ok(g.tasks.xy, 'ids are made safe for the database');
+      assert.deepEqual(schema.migrate(g).tasks, g.tasks);
+    });
+
+    await test('tree counts, spacing and pond maths', () => {
+      const st = ins.treeStats(farm, new Date(2026, 10, 18));
+      assert.equal(st.total, 4); assert.equal(st.species[0].name, 'Teak'); assert.equal(st.species[0].count, 2);
+      assert.equal(st.missingSpecies, 1); assert.equal(st.young, 1); assert.equal(st.perHa, 4);
+      assert.equal(ins.speciesKey('teek'), 'teak');
+      const sp = ins.spacingIssues(farm.items);
+      assert.equal(sp.length, 1); assert.deepEqual([sp[0].a, sp[0].b], ['a', 'b']);
+      assert.equal(Math.round(ins.pondHarvest(farm.items, 10)[0].litres), 500);
+    });
+
+    await test('rain summary counts dry days and the water shortfall', () => {
+      const r = ins.rainSummary(climate({ rain: [[-15, 12], [2, 30]] }));
+      assert.equal(r.daysSinceRain, 15); assert.equal(r.last30, 12); assert.equal(r.next3, 30);
+      assert.equal(Math.round(r.deficit30), 4 * 30 - 12);
+    });
+
+    await test('weather warnings appear when they should', () => {
+      const ids = c => adv.suggestions({ farm, climate: c, date: new Date(2026, 10, 18) }).map(s => s.id);
+      const calm = ids(climate({ rain: [[-3, 10]] }));
+      assert.ok(!calm.includes('wx-heavy-rain') && !calm.includes('wx-heat') && !calm.includes('wx-dry'));
+      assert.ok(ids(climate({ rain: [[1, 55]] })).includes('wx-heavy-rain'));
+      assert.ok(ids(climate({ tmax: [[1, 39]] })).includes('wx-heat'));
+      assert.ok(ids(climate({ gust: [[0, 60]] })).includes('wx-wind'));
+      assert.ok(ids(climate()).includes('wx-dry'), '92 dry days');
+    });
+
+    await test('species calendar follows the month, only for species on the farm', () => {
+      const ids = (m) => adv.suggestions({ farm, date: new Date(2026, m - 1, 10) }).map(s => s.id);
+      assert.ok(ids(11).includes('cal-teak-3') && !ids(11).includes('cal-teak-0'));
+      assert.ok(ids(3).includes('cal-teak-0') && ids(3).includes('cal-mango-2'));
+      assert.ok(!ids(3).some(id => id.startsWith('cal-coconut')));
+      const away = schema.migrate({ ...farm, location: { name: 'X', lat: 51.5, lon: -0.1 } });
+      assert.ok(!adv.suggestions({ farm: away, date: new Date(2026, 2, 10) }).some(s => s.id.startsWith('cal-')), 'Indian calendar only for farms there');
+    });
+
+    await test('every calendar entry and tip is well-formed', () => {
+      for (const rows of Object.values(adv.SPECIES_CALENDAR)) for (const [months, t, b] of rows) {
+        assert.ok(months.length && months.every(m => m >= 1 && m <= 12)); assert.ok(t && b);
+      }
+      for (const [months, t, b] of adv.REGION_CALENDAR) { assert.ok(months.every(m => m >= 1 && m <= 12)); assert.ok(t && b); }
+      assert.ok(adv.TIPS.length >= 15);
+    });
+
+    await test('daily pick: same all day, changes over days, most urgent first, respects hidden', () => {
+      const list = adv.suggestions({ farm, climate: climate({ rain: [[1, 55]] }), date: new Date(2026, 10, 18) });
+      const d1 = new Date(2026, 10, 18, 7), d1b = new Date(2026, 10, 18, 22);
+      assert.equal(adv.todaysPick(list, d1).today.id, adv.todaysPick(list, d1b).today.id);
+      assert.equal(adv.todaysPick(list, d1).today.prio, 3);
+      const quiet = adv.suggestions({ farm: schema.migrate({ items: [] }), date: d1 }).filter(s => s.prio === 0);
+      const picks = new Set([...Array(14)].map((_, i) => adv.todaysPick(quiet, new Date(2026, 10, 1 + i)).today.id));
+      assert.ok(picks.size >= 5, 'tips rotate day to day');
+      const first = adv.todaysPick(list, d1).today.id;
+      assert.notEqual(adv.todaysPick(list, d1, new Set([first])).today.id, first);
+      assert.ok(adv.todaysPick(list, d1).more.length >= 2);
+    });
+  }
+
   await test('seasons follow the hemisphere', () => {
     const nov = new Date(2026, 10, 18);
     assert.equal(seasons.autoSeason({ location: { lat: 12.5 } }, nov), 'autumn');

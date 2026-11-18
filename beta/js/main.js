@@ -9,7 +9,10 @@ import { state } from './store.js';
 import { DEFAULTS, FIELDS, ICON, SPECIES, SCHEMA, habitFor, settingsOf } from './schema.js';
 import { currentSeason, groundColor, seasonLabel } from './seasons.js';
 import { buildItem, disposeGroup } from './items3d.js';
-import { fetchWeather, searchPlaces } from './weather.js';
+import { fetchWeather, fetchClimate, searchPlaces } from './weather.js';
+import { renderInsights, renderTodo, computeToday, speciesColours } from './insightsUI.js';
+import { speciesKey } from './insights.js';
+import { dayKey } from './advice.js';
 import { IS_BETA, APP_VERSION } from './config.js';
 
 const $ = id => document.getElementById(id);
@@ -129,13 +132,29 @@ const meshes = new Map();
 function rebuildItem(it){
   const old = meshes.get(it.id);
   if(old){ itemsGroup.remove(old); disposeGroup(old); }
-  const g = buildItem(it, season());
+  const g = buildItem(it, season(), colourBySpecies && it.type === 'tree' ? (speciesPalette[speciesKey(it.species) || 'unnamed'] || '#9aa3a8') : null);
   meshes.set(it.id, g); itemsGroup.add(g);
   if(selectedId === it.id) updateSelBox();
 }
 function removeMesh(id){
   const g = meshes.get(id);
   if(g){ itemsGroup.remove(g); disposeGroup(g); meshes.delete(id); }
+}
+let colourBySpecies = false, speciesPalette = {};
+function refreshPalette(){ speciesPalette = colourBySpecies ? speciesColours(farm) : {}; renderLegend(); }
+function renderLegend(){
+  const el = $('legend');
+  if(!colourBySpecies){ el.hidden = true; return; }
+  const counts = {};
+  farm.items.filter(i => i.type === 'tree').forEach(t => { const k = speciesKey(t.species) || 'unnamed'; counts[k] = (counts[k] || 0) + 1; });
+  el.innerHTML = Object.entries(speciesPalette).map(([k, c]) =>
+    `<span><i class="sw" style="background:${c}"></i>${esc(k === 'unnamed' ? 'Unnamed' : k.charAt(0).toUpperCase() + k.slice(1))} ${counts[k] || 0}</span>`).join('');
+  el.hidden = false;
+}
+function toggleColour(){
+  colourBySpecies = !colourBySpecies;
+  $('btnColour').classList.toggle('on', colourBySpecies);
+  refreshPalette(); rebuildAll();
 }
 function rebuildAll(){
   for(const id of [...meshes.keys()]) removeMesh(id);
@@ -251,9 +270,24 @@ function duplicateItem(id){
 const panel = $('panel');
 const panelBusy = () => panel.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
 
+let panelTab = 'farm';
+function panelBody(){
+  const open = Object.values(farm.tasks || {}).filter(t => !t.done).length;
+  const tab = (id, label) => `<button class="tab ${panelTab === id ? 'on' : ''}" data-tab="${id}">${label}</button>`;
+  panel.innerHTML = `<div class="tabs">${tab('farm', '🌾 Farm')}${tab('insights', '💡 Insights')}${tab('todo', `✅ To-do${open ? ` <b>${open}</b>` : ''}`)}</div><div id="tabBody"></div>`;
+  panel.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { panelTab = b.dataset.tab; renderPanel(); panel.scrollTop = 0; });
+  return $('tabBody');
+}
+function insightsCtx(){
+  return { farm, climate, climateState, colourBySpecies, panel, toggleColour, rerender: () => { renderPanel(); updateToday(); },
+    openLocation: openDlg, selectItem: id => { select(id); focusOn(id); } };
+}
 function renderPanel(){
   const it = findItem(selectedId);
-  if(it) renderItemPanel(it); else renderFarmPanel();
+  if(it) return renderItemPanel(it);
+  if(panelTab === 'insights') return renderInsights(panelBody(), insightsCtx());
+  if(panelTab === 'todo') return renderTodo(panelBody(), insightsCtx());
+  renderFarmPanel();
 }
 
 function field(key, label, kind, val, opts){
@@ -346,7 +380,7 @@ function renderFarmPanel(){
     <div class="li" data-id="${esc(i.id)}"><span>${ICON[i.type]}</span><span class="t">${esc(i.name)}</span>
     <span class="s">${i.type === 'tree' ? esc(i.species || '') : ''}</span></div>`).join('');
 
-  panel.innerHTML = `
+  panelBody().innerHTML = `
     <h2>🌾 Farm</h2>
     ${field('name', 'Farm name', 'text', farm.name)}
     ${field('width', 'Width E–W (m)', 'num', farm.width)}
@@ -508,8 +542,39 @@ function scheduleWeather(force){
   const key = JSON.stringify(farm.location);
   if(!force && key === wxKey) return;
   wxKey = key;
-  clearInterval(wxTimer); loadWeather(); wxTimer = setInterval(loadWeather, 15 * 60 * 1000);
+  clearInterval(wxTimer); loadWeather(); loadClimate();
+  wxTimer = setInterval(() => { loadWeather(); if(Date.now() - (climate?.fetchedAt || 0) > 3 * 3600 * 1000) loadClimate(); }, 15 * 60 * 1000);
 }
+
+/* ---------- Rainfall history + daily suggestion ---------- */
+let climate = null, climateState = 'none', climateKey = '';
+async function loadClimate(){
+  const loc = farm.location;
+  if(!loc){ climate = null; climateState = 'none'; updateToday(); return; }
+  const key = JSON.stringify(loc); climateKey = key;
+  climateState = 'loading';
+  try{
+    const c = await fetchClimate(loc);
+    if(climateKey !== key) return;          // location changed while loading
+    climate = c; climateState = 'ready';
+  }catch(e){ console.warn(e); if(climateKey === key){ climate = null; climateState = 'error'; } }
+  updateToday();
+  if(panelTab === 'insights' && !findItem(selectedId) && !panelBusy()) renderPanel();
+}
+let todayKey = '';
+function updateToday(){
+  const chip = $('todayChip');
+  const { today } = computeToday(farm, climate);
+  todayKey = dayKey();
+  if(!today){ chip.hidden = true; return; }
+  chip.hidden = false;
+  chip.classList.toggle('urgent', today.prio >= 3);
+  $('todayText').textContent = today.title;
+  chip.title = today.body;
+}
+$('todayChip').onclick = () => { panelTab = 'insights'; select(null); };
+// A new suggestion each morning, even if the planner is left open overnight.
+setInterval(() => { if(farm && dayKey() !== todayKey){ updateToday(); if(panelTab === 'insights' && !findItem(selectedId) && !panelBusy()) renderPanel(); } }, 5 * 60 * 1000);
 
 /* ---------- Location dialog ---------- */
 const dlg = $('dlg'), geomsg = $('geomsg');
@@ -571,6 +636,7 @@ const b3d = $('btn3d'), btop = $('btnTop'), bsnap = $('btnSnap');
 b3d.onclick = () => { topView = false; b3d.classList.add('on'); btop.classList.remove('on'); controls.enableRotate = true; frameCamera(); };
 btop.onclick = () => { topView = true; btop.classList.add('on'); b3d.classList.remove('on'); controls.enableRotate = false; frameCamera(); };
 bsnap.onclick = () => { snap = !snap; bsnap.classList.toggle('on', snap); };
+$('btnColour').onclick = toggleColour;
 
 /* =========================================================
    Reacting to the store (own saves, family members' edits)
@@ -578,19 +644,20 @@ bsnap.onclick = () => { snap = !snap; bsnap.classList.toggle('on', snap); };
 let lastSize = '';
 function applyFarm(){
   farm = state.farm;
+  if(colourBySpecies) speciesPalette = speciesColours(farm);
   $('farmTitle').textContent = farm.name;
   selectedId = null; selBox.visible = false;
   buildGround(); rebuildAll();
   const size = farm.width + 'x' + farm.depth;
   if(size !== lastSize){ frameCamera(); lastSize = size; }
-  updateSeasonUI(); renderPanel(); scheduleWeather(true);
+  updateSeasonUI(); renderPanel(); scheduleWeather(true); renderLegend(); updateToday();
 }
 function applySettings(){
   $('farmTitle').textContent = farm.name;
   const size = farm.width + 'x' + farm.depth;
   if(size !== lastSize){ lastSize = size; buildGround(); frameCamera(); }
   updateSeasonUI(); groundMesh.material.color.set(groundColor(season()));
-  rebuildAll(); scheduleWeather();
+  rebuildAll(); scheduleWeather(); updateToday();
   if(!panelBusy()) renderPanel();
 }
 
@@ -602,8 +669,11 @@ store.onChange(ch => {
       if(c.removed){ removeMesh(c.id); if(selectedId === c.id){ selectedId = null; selBox.visible = false; } }
       else { const it = findItem(c.id); if(it) rebuildItem(it); }
     }
+    if(colourBySpecies){ refreshPalette(); rebuildAll(); }
+    updateToday();
     if(!panelBusy() && !drag) renderPanel();
   }
+  else if(ch.type === 'tasks'){ if(!findItem(selectedId) && !panelBusy()) renderPanel(); }
   else if(ch.type === 'status'){ renderAuth(); if(!findItem(selectedId) && !panelBusy()) renderPanel(); }
 });
 
