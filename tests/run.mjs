@@ -77,6 +77,20 @@ for (const app of ['', 'beta']) {
     }
   });
 
+  if (existsSync(join(dir, 'js', 'link.js'))) {
+    const link = await import(pathToFileURL(join(dir, 'js', 'link.js')));
+    await test('family links are long, random and read back correctly', () => {
+      const a = link.makeCode(), b = link.makeCode();
+      assert.match(a, /^farm-[A-Za-z0-9]{22}$/); assert.notEqual(a, b);
+      assert.ok(('test-' + a).length >= 20, 'database rules need ids of 20+ characters');
+      assert.equal(link.parseCode('https://x.github.io/farm-planner/#' + a), a);
+      assert.equal(link.parseCode('#' + a), a);
+      assert.equal(link.parseCode(a + '  '), a);
+      assert.equal(link.parseCode('hello'), null);
+      assert.equal(link.parseCode('#farm-short'), null);
+    });
+  }
+
   await test('seasons follow the hemisphere', () => {
     const nov = new Date(2026, 10, 18);
     assert.equal(seasons.autoSeason({ location: { lat: 12.5 } }, nov), 'autumn');

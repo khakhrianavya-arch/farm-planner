@@ -1,5 +1,10 @@
 # Changes
 
+## 2.1.0
+- No accounts: the farm is shared with a private family link. Anyone with the link can view and edit, live.
+- "Your name" (optional) shows who changed what.
+- Backups can only be removed once they're over 30 days old.
+
 ## 2.0.0
 - Shared family farm: email/password sign-in with email confirmation, live sync between devices, owner manages family access.
 - Automatic daily backups, plus one before every import, restore or clear, with one-click restore.

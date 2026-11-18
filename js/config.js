@@ -14,9 +14,7 @@ export const firebaseConfig = {
   appId: ""
 };
 
-// The /beta/ copy is the test version. It works on a separate test farm,
-// so trying out a new feature can never touch the real farm.
+// The /beta/ copy is the test version. It works on a separate test farm
+// ("test-" + the family code), so trying a new feature can never touch the real farm.
 export const IS_BETA = /\/beta(\/|$)/.test(location.pathname);
-export const FARM_ID = IS_BETA ? 'test' : 'main';
-export const LIVE_FARM_ID = 'main';
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.1.0';

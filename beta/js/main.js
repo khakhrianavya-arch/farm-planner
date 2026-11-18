@@ -305,50 +305,34 @@ function renderItemPanel(it){
 }
 
 function sharingHTML(){
-  const me = esc(state.user?.email || '');
+  const joinBox = `<div class="inline" style="margin-top:8px"><input id="joinLink" placeholder="Paste a family link">
+      <button class="btn" data-act="join">Open</button></div>`;
   switch(state.status){
     case 'offline':
-      return `<div class="note">Offline mode: this copy isn't connected to the shared database, so changes are saved in this browser only.</div>`;
-    case 'signed-out':
-      return `<div class="note">Sign in to open the shared family farm. Changes sync live for everyone.</div>
-              ${authFormHTML()}`;
-    case 'unverified':
-      return `<div class="note">We sent a confirmation link to <b>${me}</b>. Open it (check spam too), then come back and press the button below.</div>
-              <div class="row"><button class="btn primary" data-act="verified">I've confirmed my email</button>
-              <button class="btn" data-act="resend">Send the link again</button>
-              <button class="btn small" data-act="signout">Sign out</button></div>
-              <p class="muted" id="authMsg"></p>`;
+      return `<div class="note">Shared storage isn't set up for this copy yet, so changes are saved in this browser only.</div>`;
+    case 'no-farm':
+      return `<div class="note">This farm is only on this device. Create a family link to share it: anyone you send the link to can see and edit it, live. No accounts needed.</div>
+        <button class="btn primary" data-act="create">Create family link</button>
+        <p class="muted" style="margin:10px 0 0">Already have a family link?</p>${joinBox}
+        <p class="muted" id="shareMsg"></p>`;
     case 'connecting':
-      return `<div class="note">Connecting to the shared farm…</div>`;
+      return `<div class="note">Opening the family farm…</div>`;
+    case 'not-found':
     case 'error':
       return `<div class="note bad">${esc(state.error)}</div>
-              ${state.user ? '<div class="row"><button class="btn" data-act="signout">Sign out</button></div>' : authFormHTML()}`;
-    case 'no-access':
-      return `<div class="note bad">You're signed in as <b>${me}</b>, but this farm hasn't been shared with that account yet. Ask the farm's owner to add this email under <i>Family access</i>.</div>
-              <button class="btn" data-act="signout">Sign out</button>`;
-    case 'ready': {
-      const members = state.members.map(m => `
-        <div class="li static"><span class="t">${esc(m)}</span>
-        <span class="s">${m === state.owner ? 'owner' : (state.isOwner ? `<button class="btn small danger" data-act="unshare" data-email="${esc(m)}">Remove</button>` : '')}</span></div>`).join('');
-      return `<div class="note ok">✓ Shared farm · changes sync live.<br>Signed in as <b>${me}</b>${state.isOwner ? ' (owner)' : ''}.</div>
-        <div class="list">${members}</div>
-        ${state.isOwner ? `<div class="inline" style="margin-top:8px"><input id="shareEmail" type="email" placeholder="family member's email">
-          <button class="btn primary" data-act="share">Add</button></div>
-          <p class="muted">They open the same link and choose <i>Create account</i> with that email.</p>` : ''}
-        ${IS_BETA ? `<button class="btn" data-act="copylive" style="margin-top:8px">Copy the real farm into this test copy</button>` : ''}
-        <div class="row" style="margin-top:8px"><button class="btn small" data-act="signout">Sign out</button></div>`;
-    }
+        ${state.status === 'not-found' ? '<button class="btn" data-act="create">Create a new family link instead</button>' : ''}
+        ${joinBox}<p class="muted" id="shareMsg"></p>`;
+    case 'ready':
+      return `<div class="note ok">✓ Family farm · changes sync live for everyone with the link.</div>
+        <div class="inline"><input id="famLink" readonly value="${esc(store.shareLink())}">
+          <button class="btn primary" data-act="copylink">Copy</button></div>
+        <p class="muted" style="margin:6px 0 10px">Send this link to family. Anyone with it can edit, so share it only with people you trust. Backups below can undo any change.</p>
+        <div class="f"><label>Your name</label><input id="editorName" placeholder="shown on what you change" value="${esc(store.editorName())}"></div>
+        ${IS_BETA ? `<button class="btn" data-act="copylive">Copy the real farm into this test copy</button>` : ''}
+        <div class="row" style="margin-top:8px"><button class="btn small" data-act="leave">Stop using this link on this device</button></div>
+        <p class="muted" id="shareMsg"></p>`;
   }
   return '';
-}
-
-function authFormHTML(){
-  return `<div class="f"><label>Email</label><input type="email" id="authEmail" autocomplete="email"></div>
-    <div class="f"><label>Password</label><input type="password" id="authPw" autocomplete="current-password"></div>
-    <div class="row"><button class="btn primary" data-act="signin">Sign in</button>
-      <button class="btn" data-act="signup">Create account</button>
-      <button class="btn small" data-act="forgot" style="margin-left:auto">Forgot password?</button></div>
-    <p class="muted" id="authMsg"></p>`;
 }
 
 function renderFarmPanel(){
@@ -402,39 +386,36 @@ function renderFarmPanel(){
   panel.querySelectorAll('#itemList .li').forEach(el => el.onclick = () => { select(el.dataset.id); focusOn(el.dataset.id); });
   panel.querySelectorAll('[data-act]').forEach(el => el.onclick = () => panelAction(el.dataset.act, el));
   $('impFile').onchange = importFile;
-  $('authPw')?.addEventListener('keydown', e => { if(e.key === 'Enter') panelAction('signin'); });
+  $('joinLink')?.addEventListener('keydown', e => { if(e.key === 'Enter') panelAction('join'); });
+  $('editorName')?.addEventListener('change', e => store.setEditorName(e.target.value));
   loadSnapshots();
 }
 
 async function panelAction(act, el){
   const msg = t => { const m = $('fileMsg'); if(m) m.textContent = t; };
   try{
-    const authMsg = t => { const m = $('authMsg'); if(m) m.textContent = t; };
-    const creds = () => [($('authEmail')?.value || '').trim(), $('authPw')?.value || ''];
-    if(act === 'signin' || act === 'signup' || act === 'forgot' || act === 'resend' || act === 'verified'){
-      try{
-        if(act === 'signin'){ authMsg('Signing in…'); await store.signIn(...creds()); }
-        else if(act === 'signup'){ authMsg('Creating account…'); await store.signUp(...creds()); }
-        else if(act === 'forgot'){
-          const [em] = creds(); if(!em){ authMsg('Type your email above first.'); return; }
-          await store.resetPassword(em); authMsg('Password reset link sent to ' + em + '.');
-        }
-        else if(act === 'resend'){ await store.resendVerification(); authMsg('Sent again. Check your inbox and spam folder.'); }
-        else if(act === 'verified'){ if(!(await store.checkVerified())) authMsg('Not confirmed yet. Open the link in the email first.'); }
-      }catch(e){ authMsg(e.message); }
+    const shareMsg = t => { const m = $('shareMsg'); if(m) m.textContent = t; };
+    if(act === 'create'){
+      if(el) el.textContent = 'Creating…';
+      try{ await store.createFamilyFarm(); }catch(e){ shareMsg(e.message); if(el) el.textContent = 'Create family link'; }
       return;
     }
-    else if(act === 'signout') await store.signOutUser();
-    else if(act === 'share'){
-      const v = $('shareEmail').value.trim().toLowerCase();
-      if(!/.+@.+\..+/.test(v)) return;
-      await store.setMembers([...state.members, v]); renderPanel();
+    if(act === 'join'){
+      try{ await store.joinFamilyFarm($('joinLink')?.value); }catch(e){ shareMsg(e.message); }
+      return;
     }
-    else if(act === 'unshare'){
-      if(!el.dataset.confirm){ el.dataset.confirm = '1'; el.textContent = 'Sure?'; return; }
-      await store.setMembers(state.members.filter(m => m !== el.dataset.email)); renderPanel();
+    if(act === 'copylink'){
+      const inp = $('famLink'); inp.select();
+      try{ await navigator.clipboard.writeText(inp.value); el.textContent = 'Copied ✓'; }
+      catch(e){ document.execCommand?.('copy'); el.textContent = 'Copied ✓'; }
+      setTimeout(() => { if(el.isConnected) el.textContent = 'Copy'; }, 2000);
+      return;
     }
-    else if(act === 'copylive'){
+    if(act === 'leave'){
+      if(!el.dataset.confirm){ el.dataset.confirm = '1'; el.textContent = 'Click again (the shared farm itself stays as it is)'; return; }
+      store.leaveFamilyFarm(); return;
+    }
+    if(act === 'copylive'){
       if(!el.dataset.confirm){ el.dataset.confirm = '1'; el.textContent = 'Click again to replace this test farm'; return; }
       el.textContent = 'Copying…'; await store.copyLiveIntoTest();
     }
@@ -491,15 +472,11 @@ function focusOn(id){
    Header: sign-in status, season, weather
    ========================================================= */
 function renderAuth(){
-  const box = $('authBox');
-  const s = state.status;
-  if(s === 'offline') box.innerHTML = `<span class="dot"></span> This browser only`;
-  else if(s === 'signed-out') box.innerHTML = `<button data-act="signin">Sign in</button>`;
-  else if(s === 'unverified') box.innerHTML = `<span class="dot bad"></span> Confirm your email`;
+  const box = $('authBox'), s = state.status;
+  if(s === 'ready') box.innerHTML = `<span class="dot ok"></span> Family farm · synced`;
   else if(s === 'connecting') box.innerHTML = `<span class="dot"></span> Connecting…`;
-  else if(s === 'ready') box.innerHTML = `<span class="dot ok"></span> Synced · ${esc((state.user?.displayName || state.user?.email || '').split(' ')[0])}`;
-  else box.innerHTML = `<span class="dot bad"></span> ${s === 'no-access' ? 'No access' : 'Not synced'}`;
-  box.querySelector('[data-act]')?.addEventListener('click', () => { select(null); setTimeout(() => $('authEmail')?.focus(), 0); });
+  else if(s === 'error' || s === 'not-found') box.innerHTML = `<span class="dot bad"></span> Not synced`;
+  else box.innerHTML = `<span class="dot"></span> This device only`;
 }
 
 function updateSeasonUI(){
@@ -627,7 +604,7 @@ store.onChange(ch => {
     }
     if(!panelBusy() && !drag) renderPanel();
   }
-  else if(ch.type === 'auth'){ renderAuth(); if(!findItem(selectedId) && !panelBusy()) renderPanel(); }
+  else if(ch.type === 'status'){ renderAuth(); if(!findItem(selectedId) && !panelBusy()) renderPanel(); }
 });
 
 /* =========================================================

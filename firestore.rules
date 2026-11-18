@@ -1,34 +1,24 @@
 rules_version = '2';
-// Who can see and change the farm.
-// Paste this into Firebase console → Firestore Database → Rules,
-// replacing OWNER_EMAIL with the owner's Google email (lower case).
+// Family-link sharing: there are no accounts. Each farm lives under a long random
+// code (the part after # in the family link). Anyone who knows the code can open and
+// edit that farm; nobody can list farms to discover codes.
+// Paste this into Firebase console → Firestore Database → Rules → Publish.
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
-    function me() { return request.auth.token.email.lower(); }
-    function farm(farmId) { return get(/databases/$(database)/documents/farms/$(farmId)).data; }
-    function isMember(farmId) { return signedIn() && me() in farm(farmId).members; }
-    function isOwner(farmId) { return signedIn() && me() == farm(farmId).owner; }
+    function validCode(id) { return id.size() >= 20 && id.size() <= 80; }
 
     match /farms/{farmId} {
-      allow read: if isMember(farmId);
-      // Only the owner can create a farm, and only for themselves.
-      allow create: if signedIn() && me() == 'OWNER_EMAIL'
-                    && request.resource.data.owner == me()
-                    && me() in request.resource.data.members;
-      // Family members can edit the farm; only the owner can change who has access.
-      allow update: if isMember(farmId)
-                    && request.resource.data.owner == resource.data.owner
-                    && (isOwner(farmId) || request.resource.data.members == resource.data.members);
-      allow delete: if false;
+      allow get, create, update: if validCode(farmId);
+      allow list, delete: if false;
 
       match /items/{itemId} {
-        allow read, write: if isMember(farmId);
+        allow read, write: if validCode(farmId);
       }
       match /snapshots/{snapId} {
-        allow read, create: if isMember(farmId);
+        allow read, create: if validCode(farmId);
         allow update: if false;
-        allow delete: if isOwner(farmId);
+        // Backups can only be tidied away once they are over 30 days old.
+        allow delete: if resource.data.atMs < request.time.toMillis() - 2592000000;
       }
     }
   }

@@ -1,150 +1,136 @@
 // =========================================================
 // Where the farm is saved.
-//  • Offline mode: this browser only (localStorage).
-//  • Shared mode: Firebase Firestore, synced live between family members.
-// The rest of the app only talks to this module, so the way data is
-// stored can change without touching the 3D editor.
+//  • This browser only (localStorage) — when there is no family link.
+//  • Shared (Firebase Firestore) — anyone with the family link sees and
+//    edits the same farm, live. No accounts or passwords.
+// The rest of the app only talks to this module.
 // =========================================================
-import { firebaseConfig, FARM_ID, LIVE_FARM_ID, IS_BETA } from './config.js';
+import { firebaseConfig, IS_BETA } from './config.js';
 import { SCHEMA, migrate, normalizeItem, settingsOf, blankFarm } from './schema.js';
+import { makeCode, parseCode } from './link.js';
 
 const FB_VERSION = '10.12.2';
 const LOCAL_KEY = IS_BETA ? 'farmPlanner.beta' : 'farmPlanner.v1';
 const LOCAL_SNAPS = LOCAL_KEY + '.snapshots';
-const MAX_SNAPSHOTS = 40;
+const CODE_KEY = 'farmPlanner.familyCode';
+const NAME_KEY = 'farmPlanner.editorName';
+const KEEP_SNAPSHOTS = 40;
 
 export const cloudAvailable = !!firebaseConfig.apiKey;
 
-// status: 'offline' | 'signed-out' | 'unverified' | 'connecting' | 'ready' | 'no-access' | 'error'
-export const state = {
-  mode: 'local', status: cloudAvailable ? 'signed-out' : 'offline',
-  farm: null, user: null, isOwner: false, owner: '', members: [], error: ''
-};
+// status: 'offline' (no shared storage set up) | 'no-farm' (no family link yet)
+//       | 'connecting' | 'ready' | 'not-found' | 'error'
+export const state = { mode: 'local', status: cloudAvailable ? 'no-farm' : 'offline', farm: null, code: null, error: '' };
 
 const listeners = new Set();
 export function onChange(fn){ listeners.add(fn); }
 function emit(change){ listeners.forEach(fn => { try{ fn(change); }catch(e){ console.error(e); } }); }
+function setStatus(status, error = ''){ state.status = status; state.error = error; emit({ type:'status' }); }
 
-let fb = null;          // Firebase functions + instances once loaded
-let unsubs = [];
-const email = () => (state.user?.email || '').toLowerCase();
-const farmRef = (id = FARM_ID) => fb.doc(fb.db, 'farms', id);
+let fb = null, unsubs = [];
+const farmId = () => (IS_BETA ? 'test-' : '') + state.code;
+const farmRef = (id = farmId()) => fb.doc(fb.db, 'farms', id);
 
-/* ---------------- Local (this browser) ---------------- */
+/* ---------------- Small local helpers ---------------- */
 function readJSON(key){ try{ const r = localStorage.getItem(key); return r ? JSON.parse(r) : null; }catch(e){ return null; } }
 function writeJSON(key, v){ try{ localStorage.setItem(key, JSON.stringify(v)); return true; }catch(e){ return false; } }
+function readStr(key){ try{ return localStorage.getItem(key) || ''; }catch(e){ return ''; } }
+function writeStr(key, v){ try{ v ? localStorage.setItem(key, v) : localStorage.removeItem(key); }catch(e){} }
 let localTimer = null;
 function saveLocal(){ clearTimeout(localTimer); localTimer = setTimeout(() => writeJSON(LOCAL_KEY, exportFarm()), 200); }
 
-export function exportFarm(){
-  const f = state.farm;
-  return { ...settingsOf(f), items: f.items.map(it => ({ ...it })) };
-}
+export function exportFarm(){ const f = state.farm; return { ...settingsOf(f), items: f.items.map(it => ({ ...it })) }; }
+export function editorName(){ return readStr(NAME_KEY); }
+export function setEditorName(n){ writeStr(NAME_KEY, String(n || '').trim().slice(0, 40)); }
+const by = () => editorName() || 'Someone';
+export function shareLink(){ return state.code ? location.origin + location.pathname + '#' + state.code : ''; }
 
 /* ---------------- Start up ---------------- */
 export async function init(starter){
   const saved = readJSON(LOCAL_KEY);
-  state.farm = saved ? migrate(saved) : migrate(starter ? starter() : blankFarm());
+  state.farm = migrate(saved || (starter ? starter() : blankFarm()));
   emit({ type:'all' });
   if(!cloudAvailable) return;
   try{
     const base = `https://www.gstatic.com/firebasejs/${FB_VERSION}/`;
-    const [appM, authM, fsM] = await Promise.all([
-      import(base + 'firebase-app.js'), import(base + 'firebase-auth.js'), import(base + 'firebase-firestore.js')]);
-    const app = appM.initializeApp(firebaseConfig);
-    fb = { ...authM, ...fsM, auth: authM.getAuth(app), db: fsM.getFirestore(app) };
+    const [appM, fsM] = await Promise.all([import(base + 'firebase-app.js'), import(base + 'firebase-firestore.js')]);
+    fb = { ...fsM, db: fsM.getFirestore(appM.initializeApp(firebaseConfig)) };
   }catch(e){
-    console.error(e);
-    setStatus('error', 'Could not load sign-in. Check your internet connection.');
-    return;
+    console.error(e); setStatus('error', 'Could not reach the shared storage. Check your internet connection.'); return;
   }
-  fb.onAuthStateChanged(fb.auth, user => {
-    state.user = user;
-    if(!user){ disconnect(); backToLocal(); setStatus('signed-out'); }
-    else if(!user.emailVerified){ disconnect(); backToLocal(); setStatus('unverified'); }
-    else connect();
+  // A link opened directly wins; otherwise reopen the family farm this device used last.
+  const code = parseCode(location.hash) || parseCode(readStr(CODE_KEY));
+  if(code) openFarm(code); else setStatus('no-farm');
+  window.addEventListener('hashchange', () => {
+    const c = parseCode(location.hash);
+    if(c && c !== state.code) openFarm(c);
   });
 }
 
-function setStatus(status, error = ''){ state.status = status; state.error = error; emit({ type:'auth' }); }
+function rememberCode(code){
+  writeStr(CODE_KEY, code || '');
+  const want = code ? '#' + code : '';
+  if(location.hash !== want) history.replaceState(null, '', location.pathname + location.search + want);
+}
 
-const AUTH_MESSAGES = {
-  'auth/invalid-email': 'That email address doesn\'t look right.',
-  'auth/missing-password': 'Enter a password.',
-  'auth/weak-password': 'Use a password of at least 6 characters.',
-  'auth/email-already-in-use': 'An account with this email already exists. Sign in instead, or reset the password.',
-  'auth/invalid-credential': 'Wrong email or password.',
-  'auth/wrong-password': 'Wrong email or password.',
-  'auth/user-not-found': 'No account with this email yet. Use "Create account".',
-  'auth/too-many-requests': 'Too many attempts. Wait a few minutes and try again.',
-  'auth/network-request-failed': 'No internet connection.',
-  'auth/operation-not-allowed': 'Email/password sign-in is not switched on in Firebase (Authentication → Sign-in method).',
-};
-function friendly(e){ return new Error(AUTH_MESSAGES[e.code] || ('Sign-in problem: ' + (e.code || e.message))); }
-async function authCall(fn){ if(!fb) throw new Error('Sign-in is still loading. Try again in a moment.'); try{ return await fn(); }catch(e){ throw friendly(e); } }
+/* ---------------- Family link ---------------- */
+// Put the farm currently on screen into shared storage and make a new family link for it.
+export async function createFamilyFarm(){
+  if(!fb) throw new Error('Shared storage is still loading. Try again in a moment.');
+  const code = makeCode();
+  const current = exportFarm();
+  disconnect();
+  state.code = code;
+  await fb.setDoc(farmRef(), { ...settingsOf(current), createdAt: fb.serverTimestamp(), updatedBy: by() });
+  await writeAllItems(current.items, []);
+  rememberCode(code);
+  await openFarm(code);
+}
 
-export const signIn = (addr, pw) => authCall(() => fb.signInWithEmailAndPassword(fb.auth, String(addr).trim(), pw));
-export const signUp = (addr, pw) => authCall(async () => {
-  const cred = await fb.createUserWithEmailAndPassword(fb.auth, String(addr).trim(), pw);
-  await fb.sendEmailVerification(cred.user);
-});
-export const resetPassword = addr => authCall(() => fb.sendPasswordResetEmail(fb.auth, String(addr).trim()));
-export const resendVerification = () => authCall(() => fb.sendEmailVerification(fb.auth.currentUser));
-// After clicking the link in the verification email.
-export const checkVerified = () => authCall(async () => {
-  const u = fb.auth.currentUser; if(!u) return false;
-  await u.reload();
-  if(!u.emailVerified) return false;
-  await u.getIdToken(true);   // refresh so the database sees the verified email
-  state.user = fb.auth.currentUser; connect();
-  return true;
-});
-export async function signOutUser(){ if(fb) await fb.signOut(fb.auth); }
+// Open a family link (whole link or just the code).
+export async function joinFamilyFarm(text){
+  const code = parseCode(text);
+  if(!code) throw new Error('That doesn\'t look like a family link. Copy the whole link and paste it again.');
+  await openFarm(code);
+}
+
+// Stop using the family farm on this device (the shared farm itself is untouched).
+export function leaveFamilyFarm(){
+  disconnect(); state.code = null; rememberCode(null); backToLocal(); setStatus('no-farm');
+}
 
 function disconnect(){ unsubs.forEach(u => u()); unsubs = []; }
 function backToLocal(){
-  state.mode = 'local'; state.isOwner = false; state.owner = ''; state.members = [];
-  const saved = readJSON(LOCAL_KEY);
-  state.farm = migrate(saved || blankFarm());
+  state.mode = 'local';
+  state.farm = migrate(readJSON(LOCAL_KEY) || blankFarm());
   emit({ type:'all' });
 }
 
-async function createFarm(id){
-  const me = email();
-  await fb.setDoc(farmRef(id), { ...settingsOf(blankFarm()), owner: me, members: [me],
-    createdAt: fb.serverTimestamp(), updatedBy: me });
-}
-
-async function openFarmDoc(id){
-  try{
-    const s = await fb.getDoc(farmRef(id));
-    if(s.exists()) return s;
-  }catch(e){
-    if(e.code !== 'permission-denied') throw e;
-  }
-  // Either the farm does not exist yet (only the owner may create it) or this person has no access.
-  try{ await createFarm(id); return await fb.getDoc(farmRef(id)); }
-  catch(e){ return null; }
-}
-
-async function connect(){
+async function openFarm(code){
   disconnect();
+  state.code = code;
   setStatus('connecting');
   let snap;
-  try{ snap = await openFarmDoc(FARM_ID); }
-  catch(e){ console.error(e); setStatus('error', 'Could not reach the shared farm: ' + (e.code || e.message)); return; }
-  if(!snap){ backToLocal(); setStatus('no-access'); return; }
-
-  const d = snap.data();
+  try{
+    snap = await fb.getDoc(farmRef());
+    if(!snap.exists() && IS_BETA){
+      // First visit to the test version: start the test farm empty.
+      await fb.setDoc(farmRef(), { ...settingsOf(blankFarm()), createdAt: fb.serverTimestamp(), updatedBy: by() });
+      snap = await fb.getDoc(farmRef());
+    }
+  }catch(e){ console.error(e); setStatus('error', 'Could not open the family farm: ' + (e.code || e.message)); return; }
+  if(!snap.exists()){
+    state.code = null; backToLocal();
+    setStatus('not-found', 'No farm was found at that link. Check that the whole link was copied.');
+    return;
+  }
+  rememberCode(code);
   state.mode = 'cloud';
-  applyFarmDoc(d);
-  state.farm = migrate({ ...d, items: [] });
+  state.farm = migrate({ ...snap.data(), items: [] });
 
   unsubs.push(fb.onSnapshot(farmRef(), s => {
     if(!s.exists() || s.metadata.hasPendingWrites) return;
-    const dd = s.data();
-    applyFarmDoc(dd);
-    Object.assign(state.farm, settingsOf(migrate({ ...dd, items: [] })));
+    Object.assign(state.farm, settingsOf(migrate({ ...s.data(), items: [] })));
     emit({ type:'settings' });
   }, onError));
 
@@ -153,52 +139,36 @@ async function connect(){
     if(first){
       first = false;
       state.farm.items = qs.docs.map(x => normalizeItem({ ...x.data(), id: x.id })).filter(Boolean);
-      state.status = 'ready'; state.error = '';
-      emit({ type:'all' }); emit({ type:'auth' });
+      emit({ type:'all' }); setStatus('ready');
       autoSnapshot();
       return;
     }
     const changes = [];
     qs.docChanges().forEach(ch => {
-      if(ch.doc.metadata.hasPendingWrites) return; // our own edit echoing back
-      const id = ch.doc.id;
-      const i = state.farm.items.findIndex(x => x.id === id);
+      if(ch.doc.metadata.hasPendingWrites) return;           // our own edit echoing back
+      const id = ch.doc.id, i = state.farm.items.findIndex(x => x.id === id);
       if(ch.type === 'removed'){ if(i >= 0) state.farm.items.splice(i, 1); changes.push({ id, removed:true }); return; }
-      const it = normalizeItem({ ...ch.doc.data(), id });
-      if(!it) return;
-      if(i >= 0){
-        const cur = state.farm.items[i];
-        Object.keys(cur).forEach(k => { if(!(k in it)) delete cur[k]; });
-        Object.assign(cur, it);
-      } else state.farm.items.push(it);
+      const it = normalizeItem({ ...ch.doc.data(), id }); if(!it) return;
+      if(i >= 0){ const cur = state.farm.items[i]; Object.keys(cur).forEach(k => { if(!(k in it)) delete cur[k]; }); Object.assign(cur, it); }
+      else state.farm.items.push(it);
       changes.push({ id, removed:false });
     });
     if(changes.length) emit({ type:'items', changes });
   }, onError));
 }
 
-function applyFarmDoc(d){
-  state.owner = d.owner || '';
-  state.members = Array.isArray(d.members) ? d.members : [];
-  state.isOwner = state.owner === email();
-}
-
-function onError(e){
-  console.error(e);
-  if(e.code === 'permission-denied'){ disconnect(); backToLocal(); setStatus('no-access'); }
-  else setStatus('error', 'Lost connection to the shared farm: ' + (e.code || e.message));
-}
+function onError(e){ console.error(e); setStatus('error', 'Lost connection to the family farm: ' + (e.code || e.message)); }
 
 /* ---------------- Saving changes ---------------- */
+const itemDoc = (it) => { const d = { ...it, updatedBy: by(), updatedAt: fb.serverTimestamp() }; delete d.id; return d; };
 const itemTimers = new Map();
 export function saveItem(it){
   if(state.mode !== 'cloud'){ saveLocal(); return; }
   clearTimeout(itemTimers.get(it.id));
+  it.updatedBy = by();
   itemTimers.set(it.id, setTimeout(() => {
     itemTimers.delete(it.id);
-    const data = { ...it, updatedBy: email(), updatedAt: fb.serverTimestamp() };
-    delete data.id;
-    fb.setDoc(fb.doc(farmRef(), 'items', it.id), data).catch(onError);
+    fb.setDoc(fb.doc(farmRef(), 'items', it.id), itemDoc(it)).catch(onError);
   }, 250));
 }
 export function deleteItem(id){
@@ -211,8 +181,21 @@ export function saveSettings(){
   if(state.mode !== 'cloud'){ saveLocal(); return; }
   clearTimeout(settingsTimer);
   settingsTimer = setTimeout(() => {
-    fb.updateDoc(farmRef(), { ...settingsOf(state.farm), updatedBy: email(), updatedAt: fb.serverTimestamp() }).catch(onError);
+    fb.updateDoc(farmRef(), { ...settingsOf(state.farm), updatedBy: by(), updatedAt: fb.serverTimestamp() }).catch(onError);
   }, 300);
+}
+
+async function writeAllItems(items, removeIds, settings){
+  const ops = [
+    ...removeIds.map(id => b => b.delete(fb.doc(farmRef(), 'items', id))),
+    ...items.map(it => b => b.set(fb.doc(farmRef(), 'items', it.id), itemDoc(it))),
+  ];
+  if(settings) ops.push(b => b.update(farmRef(), { ...settings, updatedBy: by(), updatedAt: fb.serverTimestamp() }));
+  for(let i = 0; i < ops.length; i += 400){
+    const batch = fb.writeBatch(fb.db);
+    ops.slice(i, i + 400).forEach(op => op(batch));
+    await batch.commit();
+  }
 }
 
 // Replace the whole farm (import, start blank, restore). A backup is taken first.
@@ -223,31 +206,13 @@ export async function replaceAll(data, reason){
   state.farm = f;
   emit({ type:'all' });
   if(state.mode !== 'cloud'){ saveLocal(); return; }
-  const ops = [
-    ...old.filter(id => !f.items.some(i => i.id === id)).map(id => b => b.delete(fb.doc(farmRef(), 'items', id))),
-    ...f.items.map(it => b => { const d = { ...it, updatedBy: email(), updatedAt: fb.serverTimestamp() }; delete d.id;
-      b.set(fb.doc(farmRef(), 'items', it.id), d); }),
-    b => b.update(farmRef(), { ...settingsOf(f), updatedBy: email(), updatedAt: fb.serverTimestamp() }),
-  ];
-  for(let i = 0; i < ops.length; i += 400){
-    const batch = fb.writeBatch(fb.db);
-    ops.slice(i, i + 400).forEach(op => op(batch));
-    await batch.commit();
-  }
-}
-
-/* ---------------- Family access (owner only) ---------------- */
-export async function setMembers(list){
-  const clean = [...new Set(list.map(e => e.trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e)))];
-  if(!clean.includes(state.owner)) clean.unshift(state.owner);
-  await fb.updateDoc(farmRef(), { members: clean });
-  state.members = clean; emit({ type:'auth' });
+  await writeAllItems(f.items, old.filter(id => !f.items.some(i => i.id === id)), settingsOf(f));
 }
 
 /* ---------------- Backups (snapshots) ---------------- */
 export async function createSnapshot(reason){
   const farm = exportFarm();
-  const entry = { atMs: Date.now(), by: email() || 'this browser', reason, itemCount: farm.items.length, data: JSON.stringify(farm) };
+  const entry = { atMs: Date.now(), by: by(), reason, itemCount: farm.items.length, data: JSON.stringify(farm) };
   if(state.mode !== 'cloud'){
     const list = readJSON(LOCAL_SNAPS) || [];
     list.unshift({ id: String(entry.atMs), ...entry });
@@ -275,20 +240,20 @@ async function autoSnapshot(){
   try{
     const latest = await listSnapshots(1);
     if(!latest.length || Date.now() - latest[0].atMs > 20 * 3600 * 1000) await createSnapshot('Daily automatic backup');
-    if(state.isOwner){
-      const qs = await fb.getDocs(fb.query(fb.collection(farmRef(), 'snapshots'), fb.orderBy('atMs', 'desc')));
-      for(const d of qs.docs.slice(MAX_SNAPSHOTS)) await fb.deleteDoc(d.ref);
-    }
+    // Tidy up: beyond the newest 40, remove backups older than 30 days (the database rules allow nothing newer to be deleted).
+    const month = Date.now() - 30 * 86400000;
+    const qs = await fb.getDocs(fb.query(fb.collection(farmRef(), 'snapshots'), fb.orderBy('atMs', 'desc')));
+    for(const d of qs.docs.slice(KEEP_SNAPSHOTS)) if(d.data().atMs < month) await fb.deleteDoc(d.ref);
   }catch(e){ console.warn('Backup skipped', e); }
 }
 
-/* ---------------- Test copy helper ---------------- */
-// In the /beta/ test version: copy the real farm into the test farm.
+/* ---------------- Test version helper ---------------- */
 export async function copyLiveIntoTest(){
-  if(!IS_BETA || state.mode !== 'cloud') throw new Error('Only available in the test version while signed in');
-  const live = await fb.getDoc(farmRef(LIVE_FARM_ID));
-  const items = await fb.getDocs(fb.collection(farmRef(LIVE_FARM_ID), 'items'));
-  await replaceAll({ ...live.data(), items: items.docs.map(d => ({ ...d.data(), id: d.id })) }, 'Before copying the live farm in');
+  if(!IS_BETA || state.mode !== 'cloud') throw new Error('Only available in the test version on a family farm');
+  const liveRef = fb.doc(fb.db, 'farms', state.code);
+  const live = await fb.getDoc(liveRef);
+  const items = await fb.getDocs(fb.collection(liveRef, 'items'));
+  await replaceAll({ ...live.data(), items: items.docs.map(d => ({ ...d.data(), id: d.id })) }, 'Before copying the real farm in');
 }
 
 export { SCHEMA };
