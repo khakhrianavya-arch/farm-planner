@@ -1,0 +1,35 @@
+rules_version = '2';
+// Who can see and change the farm.
+// Paste this into Firebase console → Firestore Database → Rules,
+// replacing OWNER_EMAIL with the owner's Google email (lower case).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function me() { return request.auth.token.email.lower(); }
+    function farm(farmId) { return get(/databases/$(database)/documents/farms/$(farmId)).data; }
+    function isMember(farmId) { return signedIn() && me() in farm(farmId).members; }
+    function isOwner(farmId) { return signedIn() && me() == farm(farmId).owner; }
+
+    match /farms/{farmId} {
+      allow read: if isMember(farmId);
+      // Only the owner can create a farm, and only for themselves.
+      allow create: if signedIn() && me() == 'OWNER_EMAIL'
+                    && request.resource.data.owner == me()
+                    && me() in request.resource.data.members;
+      // Family members can edit the farm; only the owner can change who has access.
+      allow update: if isMember(farmId)
+                    && request.resource.data.owner == resource.data.owner
+                    && (isOwner(farmId) || request.resource.data.members == resource.data.members);
+      allow delete: if false;
+
+      match /items/{itemId} {
+        allow read, write: if isMember(farmId);
+      }
+      match /snapshots/{snapId} {
+        allow read, create: if isMember(farmId);
+        allow update: if false;
+        allow delete: if isOwner(farmId);
+      }
+    }
+  }
+}

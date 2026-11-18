@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Farm Planner 3D</title>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="shell">
+  <div id="betaBar" hidden>🧪 Test version: changes here go to a separate test farm, not the real one.</div>
+  <header id="wx">
+    <span class="farmname" id="farmTitle">My Farm</span>
+    <span class="loc" id="locBtn">📍 <span id="locName">Set farm location</span></span>
+    <div id="wxchips"></div>
+    <span id="wxmsg"></span>
+    <span class="spacer"></span>
+    <div class="chip"><span class="k">Season</span><span class="v" id="seasonLabel">—</span></div>
+    <select id="seasonSel" title="Preview a season (only on your screen)">
+      <option value="auto">Auto season</option>
+      <option value="spring">Spring</option>
+      <option value="summer">Summer</option>
+      <option value="autumn">Autumn</option>
+      <option value="winter">Winter</option>
+    </select>
+    <div id="authBox"></div>
+  </header>
+
+  <div id="main">
+    <nav id="tools">
+      <button class="tool on" data-tool="select"><span class="ic">🖱️</span>Select</button>
+      <div class="tsep"></div>
+      <button class="tool" data-tool="house"><span class="ic">🏠</span>House</button>
+      <button class="tool" data-tool="shed"><span class="ic">🛖</span>Shed</button>
+      <button class="tool" data-tool="tree"><span class="ic">🌳</span>Tree</button>
+      <button class="tool" data-tool="pond"><span class="ic">💧</span>Pond</button>
+      <button class="tool" data-tool="bed"><span class="ic">🌱</span>Garden bed</button>
+      <button class="tool" data-tool="path"><span class="ic">🟫</span>Path</button>
+    </nav>
+
+    <div id="view">
+      <div id="viewbtns">
+        <button id="btn3d" class="on">3D view</button>
+        <button id="btnTop">Top view</button>
+        <button id="btnSnap" class="on" title="Snap positions to 1 m">Snap 1 m</button>
+      </div>
+      <div id="hint"></div>
+      <div id="loadErr" hidden>The 3D engine could not load. Check your internet connection and refresh.</div>
+    </div>
+
+    <aside id="panel"></aside>
+  </div>
+</div>
+
+<div id="dlg">
+  <div class="box">
+    <h2>Where is your farm?</h2>
+    <p class="muted" style="margin:0 0 12px">Search a town or address, or enter coordinates. This drives the live weather and the seasons.</p>
+    <div class="row" style="flex-wrap:nowrap">
+      <input id="geoq" placeholder="e.g. Hosur, Tamil Nadu">
+      <button class="btn primary" id="geoGo">Search</button>
+    </div>
+    <div id="georesults" style="margin-top:10px"></div>
+    <h3 class="dlg-h3">Or exact coordinates</h3>
+    <div class="row" style="flex-wrap:nowrap">
+      <input id="geolat" placeholder="Latitude e.g. 12.52">
+      <input id="geolon" placeholder="Longitude e.g. 77.68">
+    </div>
+    <div class="row" style="margin-top:14px;justify-content:space-between">
+      <button class="btn" id="geoMe">📍 Use my current location</button>
+      <div class="row">
+        <button class="btn" id="geoCancel">Cancel</button>
+        <button class="btn primary" id="geoSave">Save coords</button>
+      </div>
+    </div>
+    <p class="muted" id="geomsg" style="margin:10px 0 0"></p>
+  </div>
+</div>
+
+<datalist id="speciesList"></datalist>
+
+<script type="module" src="js/main.js"></script>
+<script>
+  // If the 3D library can't load (offline), say so instead of showing a blank screen.
+  setTimeout(() => { if(!window.__farmReady) document.getElementById('loadErr').hidden = false; }, 12000);
+</script>
+</body>
+</html>

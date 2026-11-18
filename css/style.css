@@ -1,0 +1,96 @@
+:root{
+  --bg:#f4f1ea; --panel:#fffdf8; --ink:#2b2a26; --muted:#77736a; --line:#e3ddd0;
+  --accent:#3f7a3a; --accent-soft:#e3efd9; --warn:#b5482b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+[hidden]{display:none !important}
+#shell{display:grid;grid-template-rows:auto auto 1fr;height:100%}
+
+#betaBar{background:#f3d36b;color:#4a3b00;text-align:center;font-size:13px;font-weight:600;padding:5px 10px}
+
+/* ---------- Weather bar ---------- */
+#wx{display:flex;align-items:center;gap:10px;padding:8px 14px;background:#24402a;color:#f3f1e8;flex-wrap:wrap;min-height:58px}
+#wx .farmname{font-weight:700;font-size:15px;margin-right:6px;white-space:nowrap}
+#wx .loc{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 12px;cursor:pointer;white-space:nowrap}
+#wx .loc:hover{background:rgba(255,255,255,.18)}
+#wxchips{display:flex;flex-wrap:wrap}
+.chip{display:flex;flex-direction:column;line-height:1.15;padding:4px 12px;border-left:1px solid rgba(255,255,255,.15)}
+.chip .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;opacity:.65}
+.chip .v{font-size:15px;font-weight:600;white-space:nowrap}
+.chip.big .v{font-size:20px}
+#wx .spacer{flex:1}
+#wx select{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:4px 6px;color:#f3f1e8}
+#wx select option{color:#222}
+#wxmsg{font-size:13px;opacity:.8}
+#authBox{display:flex;align-items:center;gap:8px;font-size:13px;white-space:nowrap}
+#authBox .dot{width:8px;height:8px;border-radius:50%;background:#9aa;display:inline-block}
+#authBox .dot.ok{background:#7fe07a}
+#authBox .dot.bad{background:#f08a6b}
+#authBox button{background:#fffdf8;color:#24402a;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-weight:600}
+
+/* ---------- Main layout ---------- */
+#main{display:grid;grid-template-columns:76px 1fr 310px;min-height:0}
+#tools{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:6px;overflow:auto}
+.tool{width:60px;border:1px solid transparent;background:none;border-radius:12px;padding:7px 2px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted)}
+.tool .ic{font-size:22px;line-height:1}
+.tool:hover{background:#f2eee4}
+.tool.on{background:var(--accent-soft);border-color:#b9d3a8;color:var(--accent);font-weight:600}
+.tsep{width:44px;height:1px;background:var(--line);margin:4px 0}
+
+#view{position:relative;min-width:0;min-height:0}
+#view canvas{display:block;width:100%;height:100%;outline:none}
+#hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(36,64,42,.88);color:#fff;padding:7px 14px;border-radius:999px;font-size:13px;pointer-events:none;white-space:nowrap}
+#loadErr{position:absolute;inset:40% 10% auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center}
+#viewbtns{position:absolute;right:12px;top:12px;display:flex;gap:6px}
+#viewbtns button{background:rgba(255,253,248,.92);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px}
+#viewbtns button:hover{background:#fff}
+#viewbtns button.on{background:var(--accent-soft);border-color:#b9d3a8}
+
+#panel{background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:14px 16px 30px}
+#panel h2{font-size:15px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+#panel h3,.dlg-h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:18px 0 8px}
+.f{display:grid;grid-template-columns:96px 1fr;align-items:center;gap:6px;margin-bottom:7px;font-size:13px}
+.f label{color:var(--muted)}
+.f input,.f select,.f textarea{width:100%;border:1px solid var(--line);border-radius:7px;padding:5px 7px;background:#fff}
+.f input[type=color]{padding:1px;height:30px}
+.f textarea{min-height:56px;resize:vertical}
+.row{display:flex;gap:6px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px}
+.btn:hover{background:#f6f2e9}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:var(--warn)}
+.btn.small{padding:3px 8px;font-size:12px}
+.list{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.li{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:13px;border-top:1px solid var(--line);cursor:pointer}
+.li:first-child{border-top:none}
+.li:hover{background:#f6f2e9}
+.li.static{cursor:default}
+.li.static:hover{background:none}
+.li .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.li .s{color:var(--muted);font-size:12px}
+.empty{color:var(--muted);font-size:13px;padding:10px;text-align:center}
+.muted{color:var(--muted);font-size:12.5px;line-height:1.45}
+.note{background:#f6f2e9;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45;margin-bottom:8px}
+.note.ok{background:var(--accent-soft)}
+.note.bad{background:#f8e1d9}
+.inline{display:flex;gap:6px}
+.inline input{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;padding:5px 7px;background:#fff}
+
+/* ---------- Location dialog ---------- */
+#dlg{position:fixed;inset:0;background:rgba(20,30,20,.45);display:none;align-items:center;justify-content:center;z-index:10}
+#dlg.open{display:flex}
+#dlg .box{background:var(--panel);border-radius:14px;padding:18px;width:min(440px,92vw);box-shadow:0 20px 50px rgba(0,0,0,.25)}
+#dlg h2{margin:0 0 4px;font-size:17px}
+#dlg input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff}
+
+/* ---------- Phones ---------- */
+@media (max-width: 760px){
+  #main{grid-template-columns:60px 1fr;grid-template-rows:1fr 42%}
+  #panel{grid-column:1 / -1;border-left:none;border-top:1px solid var(--line)}
+  #tools{grid-row:1}
+  .tool{width:50px;font-size:10px}
+  #hint{display:none}
+  #wx .chip:not(.big){display:none}
+}
