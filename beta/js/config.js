@@ -7,8 +7,8 @@
 // Leave apiKey empty to run in offline mode (saved in this browser only).
 export const firebaseConfig = {
   apiKey: "",
-  authDomain: "",
-  projectId: "",
+  authDomain: "farm-planner-ddb22.firebaseapp.com",
+  projectId: "farm-planner-ddb22",
   storageBucket: "",
   messagingSenderId: "",
   appId: ""

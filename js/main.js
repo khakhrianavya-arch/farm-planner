@@ -311,12 +311,18 @@ function sharingHTML(){
       return `<div class="note">Offline mode: this copy isn't connected to the shared database, so changes are saved in this browser only.</div>`;
     case 'signed-out':
       return `<div class="note">Sign in to open the shared family farm. Changes sync live for everyone.</div>
-              <button class="btn primary" data-act="signin">Sign in with Google</button>`;
+              ${authFormHTML()}`;
+    case 'unverified':
+      return `<div class="note">We sent a confirmation link to <b>${me}</b>. Open it (check spam too), then come back and press the button below.</div>
+              <div class="row"><button class="btn primary" data-act="verified">I've confirmed my email</button>
+              <button class="btn" data-act="resend">Send the link again</button>
+              <button class="btn small" data-act="signout">Sign out</button></div>
+              <p class="muted" id="authMsg"></p>`;
     case 'connecting':
       return `<div class="note">Connecting to the shared farm…</div>`;
     case 'error':
       return `<div class="note bad">${esc(state.error)}</div>
-              <div class="row">${state.user ? '<button class="btn" data-act="signout">Sign out</button>' : '<button class="btn primary" data-act="signin">Try signing in again</button>'}</div>`;
+              ${state.user ? '<div class="row"><button class="btn" data-act="signout">Sign out</button></div>' : authFormHTML()}`;
     case 'no-access':
       return `<div class="note bad">You're signed in as <b>${me}</b>, but this farm hasn't been shared with that account yet. Ask the farm's owner to add this email under <i>Family access</i>.</div>
               <button class="btn" data-act="signout">Sign out</button>`;
@@ -326,14 +332,23 @@ function sharingHTML(){
         <span class="s">${m === state.owner ? 'owner' : (state.isOwner ? `<button class="btn small danger" data-act="unshare" data-email="${esc(m)}">Remove</button>` : '')}</span></div>`).join('');
       return `<div class="note ok">✓ Shared farm · changes sync live.<br>Signed in as <b>${me}</b>${state.isOwner ? ' (owner)' : ''}.</div>
         <div class="list">${members}</div>
-        ${state.isOwner ? `<div class="inline" style="margin-top:8px"><input id="shareEmail" type="email" placeholder="family member's Gmail">
+        ${state.isOwner ? `<div class="inline" style="margin-top:8px"><input id="shareEmail" type="email" placeholder="family member's email">
           <button class="btn primary" data-act="share">Add</button></div>
-          <p class="muted">They open the same link and sign in with that Google account.</p>` : ''}
+          <p class="muted">They open the same link and choose <i>Create account</i> with that email.</p>` : ''}
         ${IS_BETA ? `<button class="btn" data-act="copylive" style="margin-top:8px">Copy the real farm into this test copy</button>` : ''}
         <div class="row" style="margin-top:8px"><button class="btn small" data-act="signout">Sign out</button></div>`;
     }
   }
   return '';
+}
+
+function authFormHTML(){
+  return `<div class="f"><label>Email</label><input type="email" id="authEmail" autocomplete="email"></div>
+    <div class="f"><label>Password</label><input type="password" id="authPw" autocomplete="current-password"></div>
+    <div class="row"><button class="btn primary" data-act="signin">Sign in</button>
+      <button class="btn" data-act="signup">Create account</button>
+      <button class="btn small" data-act="forgot" style="margin-left:auto">Forgot password?</button></div>
+    <p class="muted" id="authMsg"></p>`;
 }
 
 function renderFarmPanel(){
@@ -387,13 +402,28 @@ function renderFarmPanel(){
   panel.querySelectorAll('#itemList .li').forEach(el => el.onclick = () => { select(el.dataset.id); focusOn(el.dataset.id); });
   panel.querySelectorAll('[data-act]').forEach(el => el.onclick = () => panelAction(el.dataset.act, el));
   $('impFile').onchange = importFile;
+  $('authPw')?.addEventListener('keydown', e => { if(e.key === 'Enter') panelAction('signin'); });
   loadSnapshots();
 }
 
 async function panelAction(act, el){
   const msg = t => { const m = $('fileMsg'); if(m) m.textContent = t; };
   try{
-    if(act === 'signin') await store.signIn();
+    const authMsg = t => { const m = $('authMsg'); if(m) m.textContent = t; };
+    const creds = () => [($('authEmail')?.value || '').trim(), $('authPw')?.value || ''];
+    if(act === 'signin' || act === 'signup' || act === 'forgot' || act === 'resend' || act === 'verified'){
+      try{
+        if(act === 'signin'){ authMsg('Signing in…'); await store.signIn(...creds()); }
+        else if(act === 'signup'){ authMsg('Creating account…'); await store.signUp(...creds()); }
+        else if(act === 'forgot'){
+          const [em] = creds(); if(!em){ authMsg('Type your email above first.'); return; }
+          await store.resetPassword(em); authMsg('Password reset link sent to ' + em + '.');
+        }
+        else if(act === 'resend'){ await store.resendVerification(); authMsg('Sent again. Check your inbox and spam folder.'); }
+        else if(act === 'verified'){ if(!(await store.checkVerified())) authMsg('Not confirmed yet. Open the link in the email first.'); }
+      }catch(e){ authMsg(e.message); }
+      return;
+    }
     else if(act === 'signout') await store.signOutUser();
     else if(act === 'share'){
       const v = $('shareEmail').value.trim().toLowerCase();
@@ -465,10 +495,11 @@ function renderAuth(){
   const s = state.status;
   if(s === 'offline') box.innerHTML = `<span class="dot"></span> This browser only`;
   else if(s === 'signed-out') box.innerHTML = `<button data-act="signin">Sign in</button>`;
+  else if(s === 'unverified') box.innerHTML = `<span class="dot bad"></span> Confirm your email`;
   else if(s === 'connecting') box.innerHTML = `<span class="dot"></span> Connecting…`;
   else if(s === 'ready') box.innerHTML = `<span class="dot ok"></span> Synced · ${esc((state.user?.displayName || state.user?.email || '').split(' ')[0])}`;
   else box.innerHTML = `<span class="dot bad"></span> ${s === 'no-access' ? 'No access' : 'Not synced'}`;
-  box.querySelector('[data-act]')?.addEventListener('click', () => store.signIn());
+  box.querySelector('[data-act]')?.addEventListener('click', () => { select(null); setTimeout(() => $('authEmail')?.focus(), 0); });
 }
 
 function updateSeasonUI(){

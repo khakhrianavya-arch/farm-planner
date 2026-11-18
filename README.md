@@ -1,7 +1,7 @@
 # Farm Planner 3D
 
 A shared 3D model of the farm: buildings, trees (by species), ponds, garden beds and paths,
-with live weather and seasons for the farm's location. Family members sign in with Google
+with live weather and seasons for the farm's location. Family members sign in with email and password
 and see each other's changes live.
 
 - **Live version:** `https://<username>.github.io/farm-planner/`
@@ -34,5 +34,5 @@ Updating the code never changes the farm.
 
 ## Adding family members
 
-The owner opens the live site → *Farm panel → Sharing → Family access* → adds their Gmail address.
-They open the same link and sign in with that Google account.
+The owner opens the live site → *Farm panel → Sharing → Family access* → adds their email address.
+They open the same link, choose *Create account* with that email, and confirm it from the link they're sent.

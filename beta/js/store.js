@@ -15,7 +15,7 @@ const MAX_SNAPSHOTS = 40;
 
 export const cloudAvailable = !!firebaseConfig.apiKey;
 
-// status: 'offline' | 'signed-out' | 'connecting' | 'ready' | 'no-access' | 'error'
+// status: 'offline' | 'signed-out' | 'unverified' | 'connecting' | 'ready' | 'no-access' | 'error'
 export const state = {
   mode: 'local', status: cloudAvailable ? 'signed-out' : 'offline',
   farm: null, user: null, isOwner: false, owner: '', members: [], error: ''
@@ -60,22 +60,45 @@ export async function init(starter){
   }
   fb.onAuthStateChanged(fb.auth, user => {
     state.user = user;
-    if(user) connect(); else { disconnect(); backToLocal(); setStatus('signed-out'); }
+    if(!user){ disconnect(); backToLocal(); setStatus('signed-out'); }
+    else if(!user.emailVerified){ disconnect(); backToLocal(); setStatus('unverified'); }
+    else connect();
   });
 }
 
 function setStatus(status, error = ''){ state.status = status; state.error = error; emit({ type:'auth' }); }
 
-export async function signIn(){
-  if(!fb) return;
-  try{ await fb.signInWithPopup(fb.auth, new fb.GoogleAuthProvider()); }
-  catch(e){
-    if(e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
-    setStatus('error', e.code === 'auth/unauthorized-domain'
-      ? 'This web address is not yet allowed in Firebase (Authentication → Settings → Authorized domains).'
-      : 'Sign-in failed: ' + (e.code || e.message));
-  }
-}
+const AUTH_MESSAGES = {
+  'auth/invalid-email': 'That email address doesn\'t look right.',
+  'auth/missing-password': 'Enter a password.',
+  'auth/weak-password': 'Use a password of at least 6 characters.',
+  'auth/email-already-in-use': 'An account with this email already exists. Sign in instead, or reset the password.',
+  'auth/invalid-credential': 'Wrong email or password.',
+  'auth/wrong-password': 'Wrong email or password.',
+  'auth/user-not-found': 'No account with this email yet. Use "Create account".',
+  'auth/too-many-requests': 'Too many attempts. Wait a few minutes and try again.',
+  'auth/network-request-failed': 'No internet connection.',
+  'auth/operation-not-allowed': 'Email/password sign-in is not switched on in Firebase (Authentication → Sign-in method).',
+};
+function friendly(e){ return new Error(AUTH_MESSAGES[e.code] || ('Sign-in problem: ' + (e.code || e.message))); }
+async function authCall(fn){ if(!fb) throw new Error('Sign-in is still loading. Try again in a moment.'); try{ return await fn(); }catch(e){ throw friendly(e); } }
+
+export const signIn = (addr, pw) => authCall(() => fb.signInWithEmailAndPassword(fb.auth, String(addr).trim(), pw));
+export const signUp = (addr, pw) => authCall(async () => {
+  const cred = await fb.createUserWithEmailAndPassword(fb.auth, String(addr).trim(), pw);
+  await fb.sendEmailVerification(cred.user);
+});
+export const resetPassword = addr => authCall(() => fb.sendPasswordResetEmail(fb.auth, String(addr).trim()));
+export const resendVerification = () => authCall(() => fb.sendEmailVerification(fb.auth.currentUser));
+// After clicking the link in the verification email.
+export const checkVerified = () => authCall(async () => {
+  const u = fb.auth.currentUser; if(!u) return false;
+  await u.reload();
+  if(!u.emailVerified) return false;
+  await u.getIdToken(true);   // refresh so the database sees the verified email
+  state.user = fb.auth.currentUser; connect();
+  return true;
+});
 export async function signOutUser(){ if(fb) await fb.signOut(fb.auth); }
 
 function disconnect(){ unsubs.forEach(u => u()); unsubs = []; }
