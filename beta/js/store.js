@@ -81,8 +81,14 @@ export async function createFamilyFarm(){
   const current = exportFarm();
   disconnect();
   state.code = code;
-  await fb.setDoc(farmRef(), { ...settingsOf(current), createdAt: fb.serverTimestamp(), updatedBy: by() });
-  await writeAllItems(current.items, []);
+  try{
+    await withTimeout(fb.setDoc(farmRef(), { ...settingsOf(current), createdAt: fb.serverTimestamp(), updatedBy: by() }));
+    await writeAllItems(current.items, []);
+  }catch(e){
+    state.code = null;
+    throw new Error(e.code === 'timeout' ? 'Could not reach the shared database. Check that the Firestore database exists in Firebase.'
+      : e.code === 'permission-denied' ? 'The database refused access. Check the Firestore rules in Firebase.' : 'Could not create the family farm: ' + (e.code || e.message));
+  }
   rememberCode(code);
   await openFarm(code);
 }
@@ -106,19 +112,32 @@ function backToLocal(){
   emit({ type:'all' });
 }
 
+// Firestore waits forever if the database is missing or unreachable; give up after 15 s with a clear message.
+function withTimeout(promise, ms = 15000){
+  return Promise.race([promise, new Promise((_, no) => setTimeout(() => no(Object.assign(new Error('timeout'), { code: 'timeout' })), ms))]);
+}
+
 async function openFarm(code){
   disconnect();
   state.code = code;
   setStatus('connecting');
   let snap;
   try{
-    snap = await fb.getDoc(farmRef());
+    snap = await withTimeout(fb.getDoc(farmRef()));
     if(!snap.exists() && IS_BETA){
       // First visit to the test version: start the test farm empty.
       await fb.setDoc(farmRef(), { ...settingsOf(blankFarm()), createdAt: fb.serverTimestamp(), updatedBy: by() });
       snap = await fb.getDoc(farmRef());
     }
-  }catch(e){ console.error(e); setStatus('error', 'Could not open the family farm: ' + (e.code || e.message)); return; }
+  }catch(e){
+    console.error(e); state.code = null;
+    setStatus('error', e.code === 'timeout'
+      ? 'Could not reach the shared database. Check your internet connection, and that the Firestore database exists in Firebase.'
+      : e.code === 'permission-denied'
+        ? 'The database refused access. Check the Firestore rules in Firebase.'
+        : 'Could not open the family farm: ' + (e.code || e.message));
+    return;
+  }
   if(!snap.exists()){
     state.code = null; backToLocal();
     setStatus('not-found', 'No farm was found at that link. Check that the whole link was copied.');

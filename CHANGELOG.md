@@ -1,5 +1,9 @@
 # Changes
 
+## 2.1.1
+- Clear message instead of endless "Connecting…" when the database can't be reached.
+- Each publish stamps file links with its version, so browsers never mix old and new files.
+
 ## 2.1.0
 - No accounts: the farm is shared with a private family link. Anyone with the link can view and edit, live.
 - "Your name" (optional) shows who changed what.
